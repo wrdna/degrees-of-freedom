@@ -8,8 +8,6 @@ We measure:
 
 - How much performance degrades (or not) when recipients are forced to train in the donor's subspace instead of their own.
 
-We do **not** try to claim anything global about "architecture-intrinsic" structure; we just report cross-seed transfer behavior for this setup.
-
 ---
 
 ## Background: Lottery Subspaces (Paper Setup)
