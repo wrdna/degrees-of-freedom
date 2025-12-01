@@ -1,6 +1,7 @@
 import numpy as onp #original numpy
 import jax.numpy as jnp #jax numpy
 import itertools
+from functools import partial
 from jax import jit, grad, random
 import jax
 
@@ -48,7 +49,7 @@ def reform_leaves(vec,shapes_list):
 	counter = 0
 	leaves = []
 	for shape in shapes_list:
-		step = jnp.prod(shape)
+		step = onp.prod(shape)
 		leaves.append((vec[counter:counter+step]).reshape(shape))
 		counter = counter + step
 	return leaves
@@ -65,7 +66,7 @@ def theta_to_paramstree(theta,M,flat_params0,treedef,shapes_list):
 	return jax.tree_unflatten(treedef,leaves)
 
 # Sparse matrix vector multiplication
-@jax.partial(jax.jit, static_argnums=(2))
+@partial(jax.jit, static_argnums=(2))
 def sp_matmul(A, B, D):
 	"""
 	Arguments:

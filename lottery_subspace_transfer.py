@@ -1,3 +1,19 @@
+"""
+Cross-Initialization Lottery Subspace Transfer Experiment
+
+Tests whether lottery subspaces are architecture-intrinsic or initialization-specific.
+Trains networks with different seeds using a lottery subspace computed from a donor seed.
+
+Usage:
+    # First, run standard lottery_subspace.py to generate a donor subspace:
+    python lottery_subspace.py --model TinyCNN --dataset MNIST --points_to_collect 1
+    
+    # Then run this script to test transfer from that subspace:
+    python lottery_subspace_transfer.py --model TinyCNN --dataset MNIST \
+        --transfer_from ../lottery-subspace-data/artifact_lottery_subspace_TinyCNN_MNIST_XXXX_grad00.pkl \
+        --points_to_collect 5
+"""
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -26,11 +42,6 @@ import time
 from scipy import sparse
 
 
-
-# repairing the broken FLAX init based on the response
-# at the bug I filed: https://github.com/google/flax/issues/428
-# jax.config.enable_omnistaging()
-# nic: using jax 0.1.74 for now
 
 # Sub-functions for training 
 @jax.vmap
@@ -77,7 +88,7 @@ def normal_loss_opt(model, batch):
 # Set up the arguements for main
 parser = argparse.ArgumentParser()
 parser.add_argument('--epochs', type=int, default=3, help='training epochs per run')
-parser.add_argument('--points_to_collect', type=int, default=2, help = 'runs per dimension')
+parser.add_argument('--points_to_collect', type=int, default=2, help = 'runs per dimension (different seeds)')
 parser.add_argument('--lr', type=float, default=5e-2, help = 'learning rate')
 parser.add_argument('--model', type=str, default='TinyCNN', help = 'model to train')
 parser.add_argument('--dataset', type=str, default='MNIST', help = 'dataset for training')
@@ -86,9 +97,13 @@ parser.add_argument('--ds_to_explore', nargs='+', default=[2**x for x in range(1
 parser.add_argument('--nnz', type=int, default=2**13, help = 'number of non-zeros in sparse projection matrix')
 parser.add_argument('--traj_steps', type=int, default=5, help = 'Spacing in saving out gradient direction')
 parser.add_argument('--block_start', type=int, default=0, help = 'how many points have been run before for this experiment')
-#parser.add_argument('--use_sparse_multiply', default=False, action='store_true', help = 'convert M to sparse matrix and use sparse multiply')
 parser.add_argument('--jit_grad', default=False, action='store_true', help = 'jit the gradient function for smaller projection matrices')
-parser.add_argument('--output_dir', type=str, default='../lottery-subspace-data', help = 'directory to save results')
+
+# NEW: Transfer experiment arguments
+parser.add_argument('--transfer_from', type=str, default=None, 
+	help='Path to donor lottery subspace .pkl file (e.g., artifact_lottery_subspace_..._grad00.pkl). If not provided, uses own subspace (baseline).')
+parser.add_argument('--seed_offset', type=int, default=100, 
+	help='Offset added to point_id for seed generation to ensure different seeds than donor')
 
 
 def main(args):
@@ -102,37 +117,40 @@ def main(args):
 	ds_to_explore = [int(d_num) for d_num in args.ds_to_explore]
 	nnz = args.nnz
 	traj_steps = args.traj_steps
-	block_start = args.block_start # This mainly is so the random seed is different
-	use_sparse = False #This code currently doesn't work with sparse
+	block_start = args.block_start
+	use_sparse = False
 	jit_grad = args.jit_grad
-	output_dir = args.output_dir
+	
+	# NEW: Transfer settings
+	transfer_from = args.transfer_from
+	seed_offset = args.seed_offset
+	is_transfer = transfer_from is not None
 
 	ds_max = max(ds_to_explore)
 	max_it = ds_max*traj_steps
-
 
 	# Hide any GPUs form TensorFlow. Otherwise TF might reserve memory and make
 	# it unavailable to JAX.
 	tf.config.experimental.set_visible_devices([], "GPU")
 
 	## Logging 
-	# Logger specifications
 	do_log = True
 	do_gitchecks = True
 	do_envchecks = True
 
-	log_dir = output_dir
-	if use_sparse:
-		param_str = '%s_%s_nnz%i' % (model, dataset, nnz)
+	log_dir = '../cross-init-lottery-subspace-data'
+	
+	# NEW: Different naming for transfer experiments
+	if is_transfer:
+		param_str = '%s_%s_transfer' % (model, dataset)
 	else:
-		param_str = '%s_%s' % (model, dataset)
+		param_str = '%s_%s_baseline' % (model, dataset)
 
 	logger = logging.getLogger("my logger")
-	scriptname = os.path.basename(__file__).rstrip('.py') # Get name of script
+	scriptname = os.path.basename(__file__).rstrip('.py')
 	aname, _ = loggingSetup(logger, scriptname, log_dir, do_log=do_log, param_str = param_str)
-	result_file = '%s_results' % (aname)  # Outfile name
+	result_file = '%s_results' % (aname)
 
-	# Print current environment and git status to the log
 	if do_gitchecks:
 		gitstatus(logger)
 
@@ -142,20 +160,32 @@ def main(args):
 	# Start log with experimental parameters
 	logger.info('\n ---Code Output---\n')
 	logger.info('\n')
-	logger.info('[Lottery Subspace] Subspace formed from directions in training trajectory: \n')
+	
+	# NEW: Log transfer experiment info
+	if is_transfer:
+		logger.info('[Cross-Init Transfer] Training with TRANSFERRED lottery subspace: \n')
+		logger.info('Donor subspace file: %s \n' % transfer_from)
+	else:
+		logger.info('[Cross-Init Baseline] Training with OWN lottery subspace: \n')
+	
 	logger.info('\n')
 	logger.info('Dimensions to Explore: %s \n' % str(ds_to_explore))
 	logger.info('Model: %s \n' % (model))
 	logger.info('Dataset: %s \n' % (dataset))
 	logger.info('Optimization Algorithm: %s with learning rate %.2e \n' % (opt_alg, lr))
-	logger.info('Spacing for saving out directions in trajectory: %s Iterations \n' % str(traj_steps))
-	if use_sparse:
-		logger.info('Sparsity: %s nonzero\n' % str(nnz))
-	else:
-		logger.info('No sparsity restrictions on projection matrix. \n')
-	logger.info('Collect %i points for each dimension (Random seed starting at %i). \n' % (points_to_collect, block_start))
+	logger.info('Seed offset: %i (seeds will be %i, %i, ...)\n' % (seed_offset, seed_offset, seed_offset+1))
+	logger.info('Collect %i points for each dimension. \n' % (points_to_collect))
 	logger.info('Run optimization for %i epochs. \n' % (epochs))
 	logger.info('\n')
+
+	# NEW: Load donor subspace if transfer mode
+	if is_transfer:
+		logger.info('Loading donor subspace from: %s\n' % transfer_from)
+		donor_data = load_obj(transfer_from.replace('.pkl', ''))
+		U_donor = donor_data["U"]
+		sigma_donor = donor_data["sigma"]
+		logger.info('Donor subspace shape: %s\n' % str(U_donor.shape))
+		logger.info('Donor top 10 singular values: %s\n' % str(sigma_donor[:10]))
 
 	## Setup data
 	if (dataset == 'MNIST'):
@@ -211,7 +241,7 @@ def main(args):
 		logger.error('Model type not recognized\n')
 
 
-	out =	{
+	out = {
 		"model": model,
 		"dataset": dataset,
 		"epochs": epochs,
@@ -220,9 +250,13 @@ def main(args):
 		"traj_steps": traj_steps,
 		"nnz": nnz,
 		"full_d": '',
+		"is_transfer": is_transfer,  # NEW: Track if this is a transfer experiment
+		"transfer_from": transfer_from,  # NEW: Track donor file
+		"seed_offset": seed_offset,  # NEW: Track seed offset
 		"data": {
 			"d": [],
 			"point_id": [],
+			"seed": [],  # NEW: Track actual seed used
 			"it": [],
 			"abs_theta": [],
 			"train_loss": [],
@@ -248,105 +282,101 @@ def main(args):
 		)
 	))
 
-	# Loop over runs for each dimension
+	# Loop over runs for each seed
 	for point_id in range(points_to_collect):
 
-		# Clear gradient dictionary
+		# NEW: Use offset seed to ensure different from donor
+		actual_seed = point_id + seed_offset + 12574
+		
 		out_grad = {}
 
-		#initializing the net
-		_, initial_params = net.init_by_shape(jax.random.PRNGKey(point_id+12574),[(input_shape, jnp.float32)])
+		# Initialize with THIS seed's parameters (not donor's)
+		_, initial_params = net.init_by_shape(jax.random.PRNGKey(actual_seed),[(input_shape, jnp.float32)])
 		model = flax.nn.Model(net, initial_params)
 		optimizer = flax.optim.Momentum(learning_rate=lr).create(model)
 
 		D = jnp.sum(jnp.asarray([onp.prod(x.shape) for x in jax.tree_flatten(initial_params)[0]]))
 
-		smooth_grad = onp.zeros(shape = (ds_max, D))
-
-		leaves0,treedef = jax.tree_flatten(initial_params)
-		vec0,shapes_list = flatten_leaves(leaves0)
+		logger.info('\n' + '='*95 + '\n')
+		logger.info('Point %i | Seed %i | D=%i\n' % (point_id, actual_seed, D))
 		
-		params_old = vec0
+		if is_transfer:
+			# USE DONOR'S SUBSPACE
+			U = U_donor
+			sigma = sigma_donor
+			logger.info('Using TRANSFERRED subspace from donor\n')
+		else:
+			# COMPUTE OWN SUBSPACE (baseline comparison)
+			logger.info('Computing OWN subspace (baseline)...\n')
+			
+			smooth_grad = onp.zeros(shape = (ds_max, D))
+			leaves0,treedef = jax.tree_flatten(initial_params)
+			vec0,shapes_list = flatten_leaves(leaves0)
+			params_old = vec0
 
-		total_it = -1
-		row = 0
+			total_it = -1
+			row = 0
 
+			for batch in train_ds:
+				total_it = total_it + 1
+				if total_it > max_it:
+					break
 
-		for batch in train_ds:
+				optimizer = optimizer.apply_gradient(loss_grad_full(optimizer.target, batch))
 
-			total_it = total_it + 1
+				if (total_it % traj_steps == 0) and (total_it > 0):
+					params_now = optimizer.target.params
+					leaves0,treedef = jax.tree_flatten(params_now)
+					vec0,shapes_list = flatten_leaves(leaves0)
+					smooth_grad[row, :] = vec0 - params_old
+					params_old = vec0
+					row = row + 1
 
-			if total_it  > max_it:
-				break
-
-			optimizer = optimizer.apply_gradient(loss_grad_full(optimizer.target, batch))
-
-			# After traj_steps, save the direction moved in parameter space
-			if (total_it % traj_steps == 0) and (total_it > 0):
-				params_now = optimizer.target.params
-
-				# Convert parameters into regular vecto
-				leaves0,treedef = jax.tree_flatten(params_now)
-				vec0,shapes_list = flatten_leaves(leaves0)
-
-				smooth_grad[row, :] = vec0 - params_old
-				params_old = vec0
-				row = row + 1
-
-		# This now are parameters that have been trained for 20 iterations
-		params_now = optimizer.target.params
-
-		# Important to use full_matrices=False so that U is D x d rather than D x D
-		U, sigma, _ = onp.linalg.svd(onp.transpose(smooth_grad), full_matrices=False)
-
-		out_grad["Subspace"] = smooth_grad
+			U, sigma, _ = onp.linalg.svd(onp.transpose(smooth_grad), full_matrices=False)
+			
+			# Reset optimizer to initial params for fair comparison
+			_, initial_params = net.init_by_shape(jax.random.PRNGKey(actual_seed),[(input_shape, jnp.float32)])
+			
+		# Save subspace info
 		out_grad["U"] = U
 		out_grad["sigma"] = sigma
 		out_grad["initial_params"] = initial_params
+		out_grad["seed"] = actual_seed
+		out_grad["is_transfer"] = is_transfer
 
 		if point_id < 10:
 			grad_file = '%s_grad0%i' % (aname, point_id)
 		else:
 			grad_file = '%s_grad%i' % (aname, point_id)
+		save_obj(out_grad, grad_file, log_dir + '/') 
 
-		save_obj(out_grad, grad_file, output_dir + '/') 
-
-		# Loop over dimension to explore
+		# Loop over dimensions to explore
 		for d_num, d in enumerate(ds_to_explore):
 
 			logger.info('\n'+'-'*95+'\n')
-			logger.info("Run Number "+str(point_id)+'\n')
+			logger.info("Run Number "+str(point_id)+" | Seed "+str(actual_seed)+'\n')
 			logger.info("Number of params = "+str(D)+"   subspace d="+str(d)+'\n')
 
-			# Projection plane
+			# Projection plane from lottery subspace
 			M = onp.transpose(U[:, 0:d])
 			M_unit = M / onp.linalg.norm(M,axis=1,keepdims=True)
 
-
+			# Use THIS seed's initial params as the center point
 			leaves0,treedef = jax.tree_flatten(initial_params)
 			vec0,shapes_list = flatten_leaves(leaves0)
 
-			if use_sparse:
-				# Gradient function of the loss (with sparse matrix-vector multiplication) 
+			if jit_grad:
+				loss_grad_wrt_theta = jax.jit(jax.grad(
+					lambda theta_now, batch: normal_loss(
+						theta_to_paramstree(theta_now,M_unit,vec0,treedef,shapes_list), batch
+					)
+				))
+			else:
 				loss_grad_wrt_theta = jax.grad(
 					lambda theta_now, batch: normal_loss(
-						sparse_theta_to_paramstree(theta_now,M_unit_transpose_sparse,vec0,treedef,shapes_list), batch
+						theta_to_paramstree(theta_now,M_unit,vec0,treedef,shapes_list), batch
 					)
 				)
-			else:
-				if jit_grad:
-					loss_grad_wrt_theta = jax.jit(jax.grad(
-						lambda theta_now, batch: normal_loss(
-							theta_to_paramstree(theta_now,M_unit,vec0,treedef,shapes_list), batch
-						)
-					))
-				else:
-					loss_grad_wrt_theta = jax.grad(
-						lambda theta_now, batch: normal_loss(
-							theta_to_paramstree(theta_now,M_unit,vec0,treedef,shapes_list), batch
-						)
-					)
-
 
 			# Start at the initial params (vec0), not the global origin
 			theta = jnp.zeros((1,d)) 
@@ -359,17 +389,14 @@ def main(args):
 			mass = jnp.zeros((1, d))
 			velocity = jnp.zeros((1, d))
 
-			# Reset every loop
 			total_it = -1
 			best_train_acc = 0
 			best_test_acc = 0
 			
-			# Lists to store time for computing grad and projecting theta to full parameter space
 			grad_ts = []
 			proj_ts = []
 
 			## Train the model
-			# Loop over training data
 			for batch in train_ds:
 
 				total_it += 1
@@ -379,64 +406,41 @@ def main(args):
 
 				e_float = total_it / (len(x_train)/128.0)
 
-				# This is the gradient in the hyperplane space
 				grad_t1 = time.time()
 				g_theta = loss_grad_wrt_theta(theta,batch)
 				grad_t2 = time.time()
 				grad_ts.append(grad_t2 - grad_t1)
 
-				# Take a step in the plane
 				if (opt_alg == 'Adam'):
-					# Approximation of 1st and 2nd moment via exponential averaging
 					mass = beta_1 * mass + (1.0 - beta_1) * g_theta
 					velocity = beta_2 * velocity + (1.0 - beta_2) * (g_theta**2.0)
-
-					# Bias correction
 					hat_mass = mass / (1.0-beta_1)
 					hat_velocity = velocity / (1.0-beta_2)
-
-					# Update
 					theta = theta - lr / (jnp.sqrt(hat_velocity) + epsilon) * hat_mass
 				else:
 					theta = theta - lr*g_theta
 
-				# Get updated parameters
 				proj_t1 = time.time()
-				if use_sparse:
-					params_now = sparse_theta_to_paramstree(theta,M_unit_transpose_sparse,vec0,treedef,shapes_list)
-				else:
-					params_now = theta_to_paramstree(theta,M_unit,vec0,treedef,shapes_list)
+				params_now = theta_to_paramstree(theta,M_unit,vec0,treedef,shapes_list)
 				proj_t2 = time.time()
 				proj_ts.append(proj_t2 - proj_t1)
-	
 
-				# Batch loss and accuracy
 				loss_out = normal_loss(params_now,batch)
 				accuracy_out = normal_accuracy(params_now,batch)
 
-				# Print train accuracies once in a while
 				if total_it % 50 == 0 and total_it != 0:
 					logger.info('{:10}{:10}{:15}{:15}{:15}{:15}{:15}'.format(str(round(e_float, 3)),str(total_it),str(onp.linalg.norm(theta)),str(loss_out),str(accuracy_out),'-','-')+'\n')
 
-				# Test and print stats every epoch
 				if (total_it % int(len(x_train)/128.0)) in [0]:
-				
-					# Test verification
-
 					test_loss_out = normal_loss(params_now,test_ds_normalized)
 					test_accuracy_out = normal_accuracy(params_now,test_ds_normalized)
-
-					# Full train accuracy
 					full_loss_out = normal_loss(params_now,full_train_dict)
 					full_accuracy_out = normal_accuracy(params_now,full_train_dict)
 
-					# Check if this is the best accuracy we've seen
 					if test_accuracy_out > best_test_acc:
 						best_test_acc = test_accuracy_out
-
 					if full_accuracy_out > best_train_acc:
 						best_train_acc = full_accuracy_out
-
 
 					if total_it > 0:
 						t2 = time.time()
@@ -458,6 +462,7 @@ def main(args):
 			out["full_d"] = D
 			out["data"]["d"].append(d)
 			out["data"]["point_id"].append(point_id)
+			out["data"]["seed"].append(actual_seed)  # NEW
 			out["data"]["it"].append(str(total_it))
 			out["data"]["abs_theta"].append(str(onp.linalg.norm(theta)))
 			out["data"]["train_loss"].append(str(loss_out))
@@ -473,11 +478,20 @@ def main(args):
 			out["data"]["avg_proj_time"].append(avg_proj_time)
 			out["data"]["epoch_times"].append(time_per_run[d_num, point_id])
 
+		# Write data after each seed
+		save_obj(out, result_file, log_dir + '/') 
 
-		# Write data to file every new dimension
-		save_obj(out, result_file, output_dir + '/') 
+	# Final summary
+	logger.info('\n' + '='*95 + '\n')
+	logger.info('EXPERIMENT COMPLETE\n')
+	logger.info('Transfer mode: %s\n' % is_transfer)
+	if is_transfer:
+		logger.info('Donor file: %s\n' % transfer_from)
+	logger.info('Seeds used: %s\n' % str([seed_offset + i + 12574 for i in range(points_to_collect)]))
+	logger.info('Results saved to: %s\n' % result_file)
 
 
 if __name__ == "__main__":
 	args = parser.parse_args()
 	main(args)
+

@@ -1,14 +1,20 @@
 import pickle
 from pathlib import Path
 
-def save_obj(obj, name ):
-	Path("../lottery-subspace-data/").mkdir(parents=True, exist_ok=True)
-	with open('../lottery-subspace-data/'+ name + '.pkl', 'wb') as f:
+DEFAULT_DATA_DIR = "../lottery-subspace-data/"
+
+def save_obj(obj, name, data_dir=None):
+	if data_dir is None:
+		data_dir = DEFAULT_DATA_DIR
+	Path(data_dir).mkdir(parents=True, exist_ok=True)
+	with open(data_dir + name + '.pkl', 'wb') as f:
 		pickle.dump(obj, f, pickle.HIGHEST_PROTOCOL)
 
-def load_obj(name ):
-	Path("../lottery-subspace-data/").mkdir(parents=True, exist_ok=True)
-	with open('../lottery-subspace-data/' + name + '.pkl', 'rb') as f:
+def load_obj(name, data_dir=None):
+	if data_dir is None:
+		data_dir = DEFAULT_DATA_DIR
+	Path(data_dir).mkdir(parents=True, exist_ok=True)
+	with open(data_dir + name + '.pkl', 'rb') as f:
 		return pickle.load(f)
 
 
