@@ -105,6 +105,7 @@ def plot_phase_transition_heatmap(data_dir, dataset="MNIST", save_dir=None):
         (f"burn_in_subspace_TinyCNN_{dataset}_init4", "Burn-in\n4 steps"),
         (f"burn_in_subspace_TinyCNN_{dataset}_init16", "Burn-in\n16 steps"),
         (f"burn_in_subspace_TinyCNN_{dataset}_init64", "Burn-in\n64 steps"),
+        (f"lottery_subspace_TinyCNN_{dataset}", "Lottery\nSubspace"),
     ]
     
     # Accuracy thresholds for y-axis
@@ -144,7 +145,7 @@ def plot_phase_transition_heatmap(data_dir, dataset="MNIST", save_dir=None):
         x_positions = [list(dims).index(d) + 0.5 for d in ds_arr if d in dims]
         mean_acc_filtered = [mean_acc[i] for i, d in enumerate(ds_arr) if d in dims]
         
-        colors = [COLORS['init0'], COLORS['init4'], COLORS['init16'], COLORS['init64']]
+        colors = [COLORS['init0'], COLORS['init4'], COLORS['init16'], COLORS['init64'], COLORS['lottery_subspace']]
         ax.plot(x_positions, mean_acc_filtered, color=colors[idx], linewidth=2)
         threshold_curves.append((x_positions, mean_acc_filtered, colors[idx], label.replace('\n', ' ')))
         
@@ -424,6 +425,113 @@ def plot_threshold_dimension(data_dir, accuracy_threshold=0.9, save_dir=None):
     plt.show()
 
 
+def plot_train_test_comparison(data_dir, dataset="MNIST", save_dir=None):
+    """
+    Plot train vs test accuracy comparison across all methods.
+    Similar to paper Figure showing compression ratio vs accuracy.
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
+    
+    # Methods to plot (subspace methods)
+    subspace_methods = [
+        ("burn_in_subspace_TinyCNN_{}_init0".format(dataset), "Random Subspace", COLORS['init0'], 'o'),
+        ("burn_in_subspace_TinyCNN_{}_init4".format(dataset), "Burn-in 4", COLORS['init4'], 's'),
+        ("burn_in_subspace_TinyCNN_{}_init16".format(dataset), "Burn-in 16", COLORS['init16'], '^'),
+        ("burn_in_subspace_TinyCNN_{}_init64".format(dataset), "Burn-in 64", COLORS['init64'], 'D'),
+        ("lottery_subspace_TinyCNN_{}".format(dataset), "Lottery Subspace", COLORS['lottery_subspace'], 'p'),
+    ]
+    
+    # Get full dimension D from first available result
+    full_D = None
+    for pattern, _, _, _ in subspace_methods:
+        files = find_result_files(data_dir, pattern)
+        if files:
+            result = load_pickle(files[0])
+            full_D = result.get('full_d', None)
+            if full_D:
+                break
+    
+    if full_D is None:
+        full_D = 8000  # Fallback estimate for TinyCNN
+    
+    # Plot subspace methods
+    for pattern, label, color, marker in subspace_methods:
+        files = find_result_files(data_dir, pattern)
+        if files:
+            result = load_pickle(files[0])
+            data = result['data']
+            ds = np.array(data['d'])
+            test_accs = np.array([float(x) for x in data['test_acc']])
+            train_accs = np.array([float(x) for x in data['full_train_acc']])
+            
+            # Group by dimension
+            unique_ds = np.unique(ds)
+            compression_ratios = full_D / unique_ds
+            
+            mean_test = []
+            std_test = []
+            mean_train = []
+            std_train = []
+            
+            for d in unique_ds:
+                mask = ds == d
+                mean_test.append(np.mean(test_accs[mask]))
+                std_test.append(np.std(test_accs[mask]))
+                mean_train.append(np.mean(train_accs[mask]))
+                std_train.append(np.std(train_accs[mask]))
+            
+            # Left: Train accuracy
+            ax1.errorbar(compression_ratios, mean_train, yerr=std_train, 
+                        marker=marker, color=color, label=label, 
+                        linewidth=2, capsize=3, markersize=6)
+            
+            # Right: Test accuracy
+            ax2.errorbar(compression_ratios, mean_test, yerr=std_test,
+                        marker=marker, color=color, label=label,
+                        linewidth=2, capsize=3, markersize=6)
+    
+    # Add lottery ticket
+    pattern = f"lottery_ticket_TinyCNN_{dataset}"
+    files = find_result_files(data_dir, pattern)
+    if files:
+        result = load_pickle(files[0])
+        fracs = result['fracs_on_np'].mean(axis=0)
+        test_accs = result['test_accs_np'].mean(axis=0)
+        train_accs = result['train_accs_np'].mean(axis=0)
+        test_std = result['test_accs_np'].std(axis=0)
+        train_std = result['train_accs_np'].std(axis=0)
+        
+        # Compression ratio = 1/fraction
+        compression = 1.0 / fracs
+        
+        ax1.errorbar(compression, train_accs, yerr=train_std,
+                    marker='v', color=COLORS['lottery_ticket_test'], 
+                    label='Lottery Ticket', linewidth=2, capsize=3, markersize=6)
+        ax2.errorbar(compression, test_accs, yerr=test_std,
+                    marker='v', color=COLORS['lottery_ticket_test'],
+                    label='Lottery Ticket', linewidth=2, capsize=3, markersize=6)
+    
+    # Formatting
+    for ax, title in [(ax1, 'Full Train Accuracy'), (ax2, 'Test Accuracy')]:
+        ax.set_xscale('log')
+        ax.set_xlabel('Compression Ratio (D/d)', fontsize=12)
+        ax.set_title(title, fontsize=14)
+        ax.axhline(y=0.9, color='gray', linestyle='--', alpha=0.5, linewidth=1)
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim([0, 1.05])
+        ax.legend(loc='lower right', fontsize=9)
+    
+    ax1.set_ylabel('Accuracy', fontsize=12)
+    
+    plt.suptitle(f'Conv-2 on {dataset}', fontsize=16, y=1.02)
+    plt.tight_layout()
+    
+    if save_dir:
+        plt.savefig(os.path.join(save_dir, f'fig6_train_test_comparison_{dataset}.png'), 
+                   dpi=150, bbox_inches='tight')
+    plt.show()
+
+
 def plot_all(data_dir, save_dir=None):
     """Generate all plots."""
     if save_dir and not os.path.exists(save_dir):
@@ -453,6 +561,12 @@ def plot_all(data_dir, save_dir=None):
     except Exception as e:
         print(f"  Skipping: {e}")
     
+    print("\nGenerating Train/Test Comparison plot (Fig 6)...")
+    try:
+        plot_train_test_comparison(data_dir, 'MNIST', save_dir)
+    except Exception as e:
+        print(f"  Skipping: {e}")
+    
     print("\nGenerating Threshold Dimension plot (Fig 4)...")
     try:
         plot_threshold_dimension(data_dir, save_dir=save_dir)
@@ -464,7 +578,7 @@ def plot_all(data_dir, save_dir=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Plot reproduction results")
-    parser.add_argument("--data_dir", default="../lottery-subspace-data/",
+    parser.add_argument("--data_dir", default="./lottery-subspace-data/",
                        help="Directory containing result pickle files")
     parser.add_argument("--save_dir", default=None,
                        help="Directory to save plots (displays if not set)")
