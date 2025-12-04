@@ -428,7 +428,7 @@ def plot_threshold_dimension(data_dir, accuracy_threshold=0.9, save_dir=None):
 def plot_train_test_comparison(data_dir, dataset="MNIST", save_dir=None):
     """
     Plot train vs test accuracy comparison across all methods.
-    Similar to paper Figure showing compression ratio vs accuracy.
+    X-axis: Training dimension (d)
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
     
@@ -441,18 +441,7 @@ def plot_train_test_comparison(data_dir, dataset="MNIST", save_dir=None):
         ("lottery_subspace_TinyCNN_{}".format(dataset), "Lottery Subspace", COLORS['lottery_subspace'], 'p'),
     ]
     
-    # Get full dimension D from first available result
-    full_D = None
-    for pattern, _, _, _ in subspace_methods:
-        files = find_result_files(data_dir, pattern)
-        if files:
-            result = load_pickle(files[0])
-            full_D = result.get('full_d', None)
-            if full_D:
-                break
-    
-    if full_D is None:
-        full_D = 8000  # Fallback estimate for TinyCNN
+    all_dims = set()
     
     # Plot subspace methods
     for pattern, label, color, marker in subspace_methods:
@@ -465,8 +454,8 @@ def plot_train_test_comparison(data_dir, dataset="MNIST", save_dir=None):
             train_accs = np.array([float(x) for x in data['full_train_acc']])
             
             # Group by dimension
-            unique_ds = np.unique(ds)
-            compression_ratios = full_D / unique_ds
+            unique_ds = sorted(np.unique(ds))
+            all_dims.update(unique_ds)
             
             mean_test = []
             std_test = []
@@ -481,40 +470,22 @@ def plot_train_test_comparison(data_dir, dataset="MNIST", save_dir=None):
                 std_train.append(np.std(train_accs[mask]))
             
             # Left: Train accuracy
-            ax1.errorbar(compression_ratios, mean_train, yerr=std_train, 
+            ax1.errorbar(unique_ds, mean_train, yerr=std_train, 
                         marker=marker, color=color, label=label, 
                         linewidth=2, capsize=3, markersize=6)
             
             # Right: Test accuracy
-            ax2.errorbar(compression_ratios, mean_test, yerr=std_test,
+            ax2.errorbar(unique_ds, mean_test, yerr=std_test,
                         marker=marker, color=color, label=label,
                         linewidth=2, capsize=3, markersize=6)
     
-    # Add lottery ticket
-    pattern = f"lottery_ticket_TinyCNN_{dataset}"
-    files = find_result_files(data_dir, pattern)
-    if files:
-        result = load_pickle(files[0])
-        fracs = result['fracs_on_np'].mean(axis=0)
-        test_accs = result['test_accs_np'].mean(axis=0)
-        train_accs = result['train_accs_np'].mean(axis=0)
-        test_std = result['test_accs_np'].std(axis=0)
-        train_std = result['train_accs_np'].std(axis=0)
-        
-        # Compression ratio = 1/fraction
-        compression = 1.0 / fracs
-        
-        ax1.errorbar(compression, train_accs, yerr=train_std,
-                    marker='v', color=COLORS['lottery_ticket_test'], 
-                    label='Lottery Ticket', linewidth=2, capsize=3, markersize=6)
-        ax2.errorbar(compression, test_accs, yerr=test_std,
-                    marker='v', color=COLORS['lottery_ticket_test'],
-                    label='Lottery Ticket', linewidth=2, capsize=3, markersize=6)
-    
     # Formatting
+    all_dims_sorted = sorted(all_dims)
     for ax, title in [(ax1, 'Full Train Accuracy'), (ax2, 'Test Accuracy')]:
-        ax.set_xscale('log')
-        ax.set_xlabel('Compression Ratio (D/d)', fontsize=12)
+        ax.set_xscale('log', base=2)
+        ax.set_xticks(all_dims_sorted)
+        ax.set_xticklabels([str(int(d)) for d in all_dims_sorted], rotation=45)
+        ax.set_xlabel('Training Dimension (d)', fontsize=12)
         ax.set_title(title, fontsize=14)
         ax.axhline(y=0.9, color='gray', linestyle='--', alpha=0.5, linewidth=1)
         ax.grid(True, alpha=0.3)
@@ -523,7 +494,7 @@ def plot_train_test_comparison(data_dir, dataset="MNIST", save_dir=None):
     
     ax1.set_ylabel('Accuracy', fontsize=12)
     
-    plt.suptitle(f'Conv-2 on {dataset}', fontsize=16, y=1.02)
+    plt.suptitle(f'Train vs Test Accuracy\nTinyCNN on {dataset}', fontsize=16, y=1.02)
     plt.tight_layout()
     
     if save_dir:
