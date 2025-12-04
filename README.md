@@ -82,39 +82,6 @@ Faster reproduction experiments using a smaller architecture:
 
 ---
 
-## Generated Figures
-
-### Standard Experiments (`figures/`)
-
-| Figure | Description |
-|--------|-------------|
-| `fig2_phase_transition_MNIST.png` | Phase transition: accuracy vs training dimension |
-| `fig2_phase_heatmap_MNIST.png` | Heatmap of training success across dimensions |
-| `fig3_burn_in_effect_MNIST.png` | Effect of burn-in iterations on threshold dimension |
-| `fig4_threshold_dimension.png` | Threshold dimension vs target accuracy |
-| `fig5_method_comparison_MNIST.png` | Comparison of all methods |
-
-### Transfer Experiment (`figures/`)
-
-| Figure | Description |
-|--------|-------------|
-| `fig_transfer_comparison.png` | Transfer vs baseline accuracy curves |
-| `fig_transfer_gap.png` | Performance gap (baseline - transfer) vs dimension |
-| `fig_transfer_individual.png` | Individual runs scatter plot |
-| `fig_overlap_heatmap.png` | Subspace overlap between different initializations |
-| `fig_principal_angles.png` | Principal angles between lottery subspaces |
-| `fig_singular_value_spectra.png` | Singular value decay of training trajectories |
-
-### Combined Analysis
-
-| Figure | Description |
-|--------|-------------|
-| `fig_all_methods_comparison.png` | All methods including transfer on one plot |
-| `fig_phase_transition_with_transfer.png` | Phase transition with transfer overlay |
-| `fig_burn_in_with_transfer.png` | Burn-in effect with transfer comparison |
-
----
-
 ## Quick Start
 
 ```bash
